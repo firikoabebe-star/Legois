@@ -1,0 +1,453 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ================================
+// USER MANAGEMENT
+// ================================
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  username  String   @unique
+  firstName String?
+  lastName  String?
+  avatar    String?
+  password  String
+  
+  // Email verification
+  emailVerified Boolean @default(false)
+  verificationToken String?
+  
+  // Password reset
+  resetToken String?
+  resetTokenExpiry DateTime?
+  
+  // Preferences
+  theme     String @default("light") // light, dark, system
+  language  String @default("en")
+  timezone  String @default("UTC")
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete
+  
+  // Relations
+  workspaceMembers WorkspaceMember[]
+  createdWorkspaces Workspace[] @relation("WorkspaceCreator")
+  createdPages     Page[] @relation("PageCreator")
+  createdBlocks    Block[] @relation("BlockCreator")
+  comments         Comment[]
+  notifications    Notification[]
+  activityLogs     ActivityLog[]
+  
+  @@map("users")
+}
+
+// ================================
+// WORKSPACE MANAGEMENT
+// ================================
+
+model Role {
+  id          String @id @default(cuid())
+  name        String @unique // owner, admin, member, guest
+  description String?
+  
+  // Permissions
+  canCreatePages    Boolean @default(false)
+  canEditPages      Boolean @default(false)
+  canDeletePages    Boolean @default(false)
+  canInviteMembers  Boolean @default(false)
+  canManageMembers  Boolean @default(false)
+  canManageSettings Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  workspaceMembers WorkspaceMember[]
+  
+  @@map("roles")
+}
+
+model Workspace {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  icon        String?
+  domain      String? @unique // Custom domain for workspace
+  
+  // Settings
+  isPublic    Boolean @default(false)
+  allowGuests Boolean @default(true)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete
+  
+  // Relations
+  creatorId String
+  creator   User @relation("WorkspaceCreator", fields: [creatorId], references: [id])
+  
+  members      WorkspaceMember[]
+  pages        Page[]
+  databases    Database[]
+  notifications Notification[]
+  activityLogs ActivityLog[]
+  
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id String @id @default(cuid())
+  
+  // Relations
+  userId      String
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  roleId      String
+  role        Role @relation(fields: [roleId], references: [id])
+  
+  // Member settings
+  isActive    Boolean @default(true)
+  invitedBy   String?
+  invitedAt   DateTime?
+  joinedAt    DateTime @default(now())
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([userId, workspaceId])
+  @@map("workspace_members")
+}
+
+// ================================
+// PAGE & CONTENT SYSTEM
+// ================================
+
+model Page {
+  id       String  @id @default(cuid())
+  title    String
+  icon     String?
+  cover    String?
+  
+  // Page structure
+  parentId String?
+  parent   Page?   @relation("PageHierarchy", fields: [parentId], references: [id])
+  children Page[]  @relation("PageHierarchy")
+  
+  // Content
+  content  String?   // Rich text content for page description
+  
+  // Settings
+  isPublic     Boolean @default(false)
+  isTemplate   Boolean @default(false)
+  isArchived   Boolean @default(false)
+  isFavorite   Boolean @default(false)
+  
+  // SEO
+  slug         String?
+  metaTitle    String?
+  metaDescription String?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete
+  publishedAt DateTime?
+  
+  // Relations
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creatorId   String
+  creator     User @relation("PageCreator", fields: [creatorId], references: [id])
+  
+  blocks       Block[]
+  comments     Comment[]
+  pageShares   PageShare[]
+  activityLogs ActivityLog[]
+  
+  @@index([workspaceId])
+  @@index([creatorId])
+  @@index([parentId])
+  @@map("pages")
+}
+
+model PageShare {
+  id       String @id @default(cuid())
+  token    String @unique @default(cuid())
+  
+  // Share settings
+  isPublic    Boolean @default(false)
+  allowComments Boolean @default(false)
+  allowDuplicates Boolean @default(false)
+  expiresAt   DateTime?
+  password    String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  pageId String
+  page   Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  
+  @@map("page_shares")
+}
+
+// ================================
+// BLOCK SYSTEM
+// ================================
+
+model Block {
+  id       String @id @default(cuid())
+  type     String // text, heading, list, image, code, divider, database, etc.
+  content  String   // Block-specific content and properties
+  
+  // Position and structure
+  position Int    // Order within page
+  parentId String?
+  parent   Block? @relation("BlockHierarchy", fields: [parentId], references: [id])
+  children Block[] @relation("BlockHierarchy")
+  
+  // Settings
+  isArchived Boolean @default(false)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete
+  
+  // Relations
+  pageId    String
+  page      Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  creatorId String
+  creator   User @relation("BlockCreator", fields: [creatorId], references: [id])
+  
+  comments Comment[]
+  
+  @@index([pageId])
+  @@index([position])
+  @@map("blocks")
+}
+
+// ================================
+// DATABASE SYSTEM
+// ================================
+
+model Database {
+  id          String @id @default(cuid())
+  name        String
+  description String?
+  icon        String?
+  
+  // Database settings
+  defaultView String @default("table") // table, board, calendar, gallery
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete
+  
+  // Relations
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  
+  properties DatabaseProperty[]
+  rows       DatabaseRow[]
+  views      DatabaseView[]
+  
+  @@index([workspaceId])
+  @@map("databases")
+}
+
+model DatabaseProperty {
+  id       String @id @default(cuid())
+  name     String
+  type     String // text, number, select, multi_select, date, person, checkbox, url, email, phone, formula, relation, rollup, created_time, created_by, last_edited_time, last_edited_by
+  
+  // Property configuration
+  options  String?  // For select, multi_select, etc.
+  formula  String? // For formula properties
+  
+  // Display settings
+  position Int
+  isVisible Boolean @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  databaseId String
+  database   Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  
+  values DatabaseValue[]
+  
+  @@index([databaseId])
+  @@map("database_properties")
+}
+
+model DatabaseRow {
+  id String @id @default(cuid())
+  
+  // Row settings
+  position Int
+  isArchived Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete
+  
+  // Relations
+  databaseId String
+  database   Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  
+  values DatabaseValue[]
+  
+  @@index([databaseId])
+  @@map("database_rows")
+}
+
+model DatabaseValue {
+  id    String @id @default(cuid())
+  value String   // Stores the actual value based on property type
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  rowId      String
+  row        DatabaseRow @relation(fields: [rowId], references: [id], onDelete: Cascade)
+  propertyId String
+  property   DatabaseProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  
+  @@unique([rowId, propertyId])
+  @@map("database_values")
+}
+
+model DatabaseView {
+  id       String @id @default(cuid())
+  name     String
+  type     String // table, board, calendar, gallery, list
+  
+  // View configuration
+  config   String   // Filters, sorts, grouping, etc.
+  isDefault Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  databaseId String
+  database   Database @relation(fields: [databaseId], references: [id], onDelete: Cascade)
+  
+  @@index([databaseId])
+  @@map("database_views")
+}
+
+// ================================
+// COLLABORATION SYSTEM
+// ================================
+
+model Comment {
+  id      String @id @default(cuid())
+  content String   // Rich text content
+  
+  // Comment threading
+  parentId String?
+  parent   Comment? @relation("CommentThread", fields: [parentId], references: [id])
+  replies  Comment[] @relation("CommentThread")
+  
+  // Status
+  isResolved Boolean @default(false)
+  isEdited   Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete
+  
+  // Relations
+  authorId String
+  author   User @relation(fields: [authorId], references: [id])
+  
+  pageId  String?
+  page    Page? @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  blockId String?
+  block   Block? @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  
+  @@index([pageId])
+  @@index([blockId])
+  @@map("comments")
+}
+
+// ================================
+// NOTIFICATION SYSTEM
+// ================================
+
+model Notification {
+  id      String @id @default(cuid())
+  type    String // comment, mention, page_shared, workspace_invite, etc.
+  title   String
+  message String?
+  
+  // Notification data
+  data    String?  // Additional context data
+  
+  // Status
+  isRead  Boolean @default(false)
+  readAt  DateTime?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  userId      String
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([isRead])
+  @@map("notifications")
+}
+
+// ================================
+// ACTIVITY & AUDIT LOG
+// ================================
+
+model ActivityLog {
+  id     String @id @default(cuid())
+  action String // created, updated, deleted, shared, etc.
+  entity String // page, block, workspace, etc.
+  entityId String
+  
+  // Activity details
+  details String?  // What changed, old/new values, etc.
+  ipAddress String?
+  userAgent String?
+  
+  createdAt DateTime @default(now())
+  
+  // Relations
+  userId      String
+  user        User @relation(fields: [userId], references: [id])
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pageId      String?
+  page        Page? @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([workspaceId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
